@@ -90,23 +90,20 @@ class BoltzmannM:
         # COmputes inputs to the current states
         return self.bias + self.W@state
     
-    def iterate(self, no_iters, savehist = False):
+    def iterate(self, no_iters, savehist = False, suppress_output = False):
+        # Runs the generative model to create states
+        # If BM did not run before, it will need some time to settle into a
+        # stable state distribution
+        
+        
         from tqdm import tqdm
         
-        print("============================================")
-        print("Doing %d iterations"%no_iters)
-
-        total_no_states = 0
-        for n in range(self.N+1):
-            #n is the no. of "on" states
-            total_no_states += self.ncr(self.N,n)
-
-        print("There is a total of %d different possible states for %d neurons"\
-              %(total_no_states,self.N))
-
-        print("Initial state:")
         state = self.state
-        print(state)
+        
+        if not suppress_output:
+            print("============================================")
+            print("Initial state:")
+            print(state)
 
         if savehist:
             state_hist = [0]*no_iters
@@ -126,12 +123,10 @@ class BoltzmannM:
 
             # Compute energy of state vector
             E = self.energy(state)
-
-        print("\nEnd state:")
-        print(state)
         
-        print("End of iteration. Returning end state")
-        print("============================================")
+        
+        if not suppress_output:
+            print("End of iteration")
         self.state = state
 
         if savehist:
@@ -140,56 +135,65 @@ class BoltzmannM:
             return state
         
     def learn(self, data, it = 1000, alpha = 0.1):
-        # it = no. of iterations
+        # it = no. of iterations (iterates it times over all data)
         # Data have to be a 2D list, where a (first entry of list) row is one state vector of the visible units
         # alpha: learning rate
         
-        print('Learning...')
-        
+        """
+        # Generate all possible states for later estimation of <sisj>_model
+        # List all possible states for the self.N visible neurons
+        import itertools
+        all_possible_states = [list(i) for i in itertools.product([0, 1], \
+                               repeat=self.N)]
+        """
+    
         W_hist = np.zeros((self.N,self.N,it))
+        expect_sisj_data, expect_si_data = self.expect_sisj_data(data)
         
-        for i in range(it):
-            expect_data = self.expect_sisj_data(data)
-            expect_model = self.expect_sisj_model()
-            self.W = self.W + alpha*(expect_data - expect_model)
+        from tqdm import tqdm
+        for i in tqdm(range(it)):
+            expect_sisj_model, expect_si_model = self.expect_sisj_model()
+            self.W = self.W + alpha*(expect_sisj_data - expect_sisj_model)
+            self.bias = self.bias + alpha*(expect_si_data - expect_si_model)
             
-            W_hist[:,:,i] = self.W
-            
-            if i%100 == 0:
-                print('..')
+            # W_hist[:,:,i] = self.W
                 
-        return self.W
+        return self.W, self.bias
         
     def expect_sisj_data(self, data):
         # returns expect_sisj_data
+        # data has to be a list of dimensions no_vectors x no_units (visible units)
 
-        ## Compute <s_i s_j> in the data
+        ## Compute <s_i s_j> and <s_i> in the data
         expect_sisj_data = np.zeros((self.N,self.N))
+        expect_si_data = np.zeros(self.N)
+        
         
         for idx, state in enumerate(data):
+            expect_si_data += state
             for si, value in enumerate(state):
                 if value == 1:
                     expect_sisj_data[si,:] += state
                     
         np.fill_diagonal(expect_sisj_data, 0)
         expect_sisj_data = expect_sisj_data/len(data)
-        
-        return expect_sisj_data
+        expect_si_data = expect_si_data/len(data)
+                
+        return expect_sisj_data, expect_si_data
         
     def expect_sisj_model(self):
-        ## Compute <s_i s_j> in the model
+        ## Compute <s_i s_j> and <si> in the model
         expect_sisj_model = np.zeros((self.N,self.N))
+        expect_si_model = np.zeros(self.N)
         
-        import itertools
-        
-        # List all possible states for the self.N visible neurons
-        all_possible_states = [list(i) for i in itertools.product([0, 1], \
-                               repeat=self.N)]
-        
-        # Z is denominator in Boltzmann distro
+        # Z is denominator in Boltzmann distro (i.e. partition function)
         Z = sum(self.energy(all_possible_states))
         
         for i in range(self.N):
+            matches_si = [state for state in all_possible_states if state[i] == 1]
+            energies_si = np.array(self.energy(matches_si))
+            expect_si_model[i] = np.exp(-energies_si).sum() / Z
+            
             for j in range(i+1, self.N):
                 matches = [state for state in all_possible_states if \
                            state[i] == 1 and state[j]==1]
@@ -198,4 +202,4 @@ class BoltzmannM:
                 expect_sisj_model[i,j] = np.exp(-energies).sum() / Z
                 expect_sisj_model[j,i] = expect_sisj_model[i,j].copy()
                 
-        return expect_sisj_model
+        return expect_sisj_model, expect_si_model
