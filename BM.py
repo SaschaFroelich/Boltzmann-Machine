@@ -15,20 +15,21 @@ import operator as op
 class BoltzmannM:
     # **kwargs: "W" (connectivity matrix), "bias" (bias-vector), "init_ state" (initial 
     # state vector), T (system temp)
-    def __init__(self, no_neurons, **kwargs):
-        # Initialise values N, W, bias, init_state
+    def __init__(self, no_vis, no_hidden = 0, **kwargs):
+        # Initialise values N_vis,, N_hidden W, bias, init_state
         
-        self.N = no_neurons
+        self.N_vis = no_vis
+        # self.N_hidden = no_hidden
         
         if 'W' in kwargs:
             self.W = kwargs['W']
         else:
             # Generate random connectivity matrix W
-            max_strength = 1/self.N
+            max_strength = 1/self.N_vis
 
-            W = np.zeros([self.N,self.N])
-            for n1 in range(self.N):
-                for n2 in range(n1,self.N):
+            W = np.zeros([self.N_vis,self.N_vis])
+            for n1 in range(self.N_vis):
+                for n2 in range(n1,self.N_vis):
                     if (n1 != n2):
                          W[n1,n2] = np.random.rand(1)*max_strength
                          W[n2,n1] = W[n1,n2]
@@ -40,13 +41,13 @@ class BoltzmannM:
             # Create random bias vector from uniform distro on [shift, scale + shift]
             scale = 2
             shift = -2
-            self.bias = np.random.rand(self.N)*scale + shift
+            self.bias = np.random.rand(self.N_vis)*scale + shift
         
         if 'init_state' in kwargs:
             self.state = kwargs['init_state']
         else: 
             # Create a random initial state:
-            self.state = np.random.randint(0,high=2,size=self.N)
+            self.state = np.random.randint(0,high=2,size=self.N_vis)
             
         if 'T' in kwargs:
             self.T = kwargs['T']
@@ -90,7 +91,7 @@ class BoltzmannM:
         # COmputes inputs to the current states
         return self.bias + self.W@state
     
-    def iterate(self, no_iters, savehist = False, suppress_output = False):
+    def iterate(self, epochs, savehist = False, suppress_output = False):
         # Runs the generative model to create states
         # If BM did not run before, it will need some time to settle into a
         # stable state distribution
@@ -106,20 +107,20 @@ class BoltzmannM:
             print(state)
 
         if savehist:
-            state_hist = [0]*no_iters
+            state_hist = [0]*epochs
 
-        for iterdx in tqdm(range(no_iters)):
-            for i in range(self.N):
-                z = self.bias + self.W@state
-                prob_active = self.logistic(z)
-
+        for e in tqdm(range(epochs)):
+            z = self.bias + self.W@state
+            prob_active = self.logistic(z)
+            
+            for i in range(self.N_vis):
                 if np.random.rand(1) > prob_active[i]:
                     state[i] = 0
                 else:
                     state[i] = 1
 
             if savehist:
-                state_hist[iterdx] = state.copy().tolist()
+                state_hist[e] = state.copy().tolist()
 
             # Compute energy of state vector
             E = self.energy(state)
@@ -127,6 +128,7 @@ class BoltzmannM:
         
         if not suppress_output:
             print("End of iteration")
+            
         self.state = state
 
         if savehist:
@@ -141,13 +143,13 @@ class BoltzmannM:
         
         """
         # Generate all possible states for later estimation of <sisj>_model
-        # List all possible states for the self.N visible neurons
+        # List all possible states for the self.N_vis visible neurons
         import itertools
         all_possible_states = [list(i) for i in itertools.product([0, 1], \
-                               repeat=self.N)]
+                               repeat=self.N_vis)]
         """
     
-        W_hist = np.zeros((self.N,self.N,it))
+        W_hist = np.zeros((self.N_vis,self.N_vis,it))
         expect_sisj_data, expect_si_data = self.expect_sisj_data(data)
         
         from tqdm import tqdm
@@ -165,8 +167,8 @@ class BoltzmannM:
         # data has to be a list of dimensions no_vectors x no_units (visible units)
 
         ## Compute <s_i s_j> and <s_i> in the data
-        expect_sisj_data = np.zeros((self.N,self.N))
-        expect_si_data = np.zeros(self.N)
+        expect_sisj_data = np.zeros((self.N_vis,self.N_vis))
+        expect_si_data = np.zeros(self.N_vis)
         
         
         for idx, state in enumerate(data):
@@ -183,18 +185,18 @@ class BoltzmannM:
         
     def expect_sisj_model(self):
         ## Compute <s_i s_j> and <si> in the model
-        expect_sisj_model = np.zeros((self.N,self.N))
-        expect_si_model = np.zeros(self.N)
+        expect_sisj_model = np.zeros((self.N_vis,self.N_vis))
+        expect_si_model = np.zeros(self.N_vis)
         
         # Z is denominator in Boltzmann distro (i.e. partition function)
         Z = sum(self.energy(all_possible_states))
         
-        for i in range(self.N):
+        for i in range(self.N_vis):
             matches_si = [state for state in all_possible_states if state[i] == 1]
             energies_si = np.array(self.energy(matches_si))
             expect_si_model[i] = np.exp(-energies_si).sum() / Z
             
-            for j in range(i+1, self.N):
+            for j in range(i+1, self.N_vis):
                 matches = [state for state in all_possible_states if \
                            state[i] == 1 and state[j]==1]
                 
