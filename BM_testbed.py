@@ -14,21 +14,12 @@ import numpy as np
 from pylab import *
 import operator as op
 from tqdm import tqdm
+from PIL import Image
+import random
+
 mndata = MNIST('python-mnist/data')
 images, labels = mndata.load_training()
  
-N = 5
-bmtest = BM.BoltzmannM(N)
-
-#%%
-def ncr(n, r):
-    # nchooser(n,r)
-    from functools import reduce
-    r = min(r, n-r)
-    numer = reduce(op.mul, range(n, n-r, -1), 1)
-    denom = reduce(op.mul, range(1, r+1), 1)
-    return numer / denom
-
 
 #%%
 """Train with binarised MNIST dataset"""
@@ -48,7 +39,6 @@ images_bin = images.copy()
 #images_bin[images_bin <= 30] = 0
 #images_bin[images_bin > 30] = 1
 
-images_bin=images_bin[:1000]
 for row in tqdm(range(len(images_bin))):
     digit = [0 if i<=30 else 1 for i in images_bin[row]]
     images_bin[row] = digit
@@ -68,8 +58,46 @@ del images
 #del images_bin
 
 
+#%% Train BM on digit 8
+random.seed(111)
+
+disrupted_eight = Image.open('images/disrupted_8_inpt.png').convert('L')
+disrupted_eight = np.array(disrupted_eight).reshape((28*28,1))
+disr_8_inpt = [0 if i<=30 else 1 for i in disrupted_eight]
+
+data = []
+for i in range(len(images_bin)):
+    if labels[i] == 8:
+        data.append(images_bin[i])
+
 """Initialise Boltzmann Machine"""
-bm = BM.BoltzmannM(28*28)
+bm = BM.BoltzmannM(28*28, no_hid=28*28)
+bm.state[0:28*28] = disr_8_inpt
+state = bm.iterate(T=0.001)
+imvec = np.reshape(state[0:28*28], (28,28)).tolist()
+i=Image.fromarray(np.array(imvec, dtype=np.uint8)*200,"L")
+name = "images/before_disr8.png"
+i = i.resize((200,200))
+i.save(name)
+
+bm.learn(data, it = 10_000)
+
+#%%
+"Create images before learning Before learning"
+
+for idx in range(10):
+    #state = bm.iterate(T=0.001)
+    #state = state[0:28*28]
+    state = images_bin[17]
+    imvec = np.reshape(state, (28,28)).tolist()
+    i=Image.fromarray(np.array(imvec, dtype=np.uint8)*200,"L")
+    name = "images/before_image{0}.png".format(idx)
+    i = i.resize((200,200))
+    i.save(name)
+
+#%%
+
+bm.learn(data, it = 600)
 
 #%%
 
@@ -81,6 +109,17 @@ bm.learn(images_bin, it = 600)
 _ = bm.iterate(10_000)
 
 #%%
+testdata = [[1,1,1],[1,0,1],[0,0,1],[1,1,1]]
+expect_sisj_model = np.zeros((3,3))
+
+for it in range(len(testdata)):
+    t=it+1
+    newstate = np.array(testdata[it])
+    for i in range(3):
+        #breakpoint()
+        expect_sisj_model[i,:] = expect_sisj_model[i,:]*(t-1)/t + newstate[i]*newstate/t
+
+#%% Iterate a number of random states.
 statehist = bm.iterate(100, savehist=True)
 
 from PIL import Image

@@ -69,7 +69,7 @@ class BoltzmannM:
             
         if 'bias' in kwargs:
             self.bias = kwargs['bias']
-        else: 
+        else:
             # Create random bias vector from uniform distro on [shift, scale + shift]
             scale = 2
             shift = -1
@@ -112,15 +112,17 @@ class BoltzmannM:
     
     def iterate(self, epochs = 1, T = 1):
         """output
-        state [DEFAULT]: last network state after iteration.
+        states: last network state after iteration (in case of 1 epoch).
+                history of states during iteration (in case of epochs > 1)
         """
+        #from tqdm import tqdm
         # Runs the generative model to create states
         # If BM did not run before, it will need some time to settle into a
         # stable state distribution
         # 1 epoch corresponds to 1 iteration step where all units get updated once        
         state = self.state
 
-
+        states = []
         for e in range(epochs):
             z = self.bias + self.W@state
             prob_active = self.logistic(z,T)
@@ -130,23 +132,50 @@ class BoltzmannM:
                     state[i] = 0
                 else:
                     state[i] = 1
-            
+                    
+            states.append(state)
+    
+    
         self.state = state
+        
+        if epochs == 1:
+            states = self.state
 
+        return states
+    
+    # Use decorator here??
+    def iterate_clamped_vis(self, clamped_state, T = 1):
+        
+        state = self.state
+        state[0 : self.N_vis] = clamped_state
+        
+        z = self.bias + self.W@state
+        prob_active = self.logistic(z,T)
+        
+        for i in range(self.N_hid):
+            hidden_index = i+self.N_vis
+            if np.random.rand(1) > prob_active[hidden_index]:
+                state[hidden_index] = 0
+            else:
+                state[hidden_index] = 1
+        
+        self.state = state
+        
         return state
+        
         
     def learn(self, data, it = 1000, alphaW = 0.03, alphab = 0.03):
         # it = no. of iterations (iterates it times over all data)
         # Data have to be a 2D list, where a (first entry of list) row is one state vector of the visible units
         # alpha: learning rate
         
-        """DOES NOT ITERATE OVER DATA MORE THAN ONCE!!!"""
         
         print("Getting ready to do some learnin'")
         
         if not isinstance(data, list):
             data = data.tolist()
             
+        print("Computing expectation values in data...")
         expect_sisj_data, expect_si_data = self.expect_sisj_data(data)
         
         #diff_sisj = []
@@ -155,8 +184,8 @@ class BoltzmannM:
         """Below code computes <s_i,s_j> and <s_i> of the model, then calculates
         the differences to <s_i,_j> and <_i> in the data and updates W and bias accordingly."""
         for i in range(it):
-            if i%100 == 0:
-                print("Learning iteration %d of %d..."%(i,it))
+            if i%10 == 0:
+                print("Learning %f\% done..."%(i*100/it))
                 
             expect_sisj_model, expect_si_model = self.expect_sisj_model()
             
@@ -177,9 +206,8 @@ class BoltzmannM:
     def expect_sisj_data(self, data):
         """data has to be a list of dimensions no_data_patterns*no_units (visible units)"""
 
-        """Added self.N_hid, but still have to implement learning with N_hid"""
-
         import time 
+        from tqdm import tqdm
         start_time = time.time()
 
         ## Compute <s_i s_j> and <s_i> in the data
@@ -187,46 +215,58 @@ class BoltzmannM:
                                      self.N_hid))
         
         expect_si_data = np.zeros(self.N_vis+self.N_hid)
-        print("bla")
-        breakpoint()
+        
         for idx, state in enumerate(data):
-            expect_si_data += state
-            for si, value in enumerate(state):
-                if value == 1:
-                    expect_sisj_data[si,:] += state
+            print("Inspecting data sample %d of %d"%(idx, len(data)))
+            t = idx+1
+            
+            if self.N_hid == 0:
+                for i in range(self.N_vis):
+                    expect_sisj_data[i,:] = expect_sisj_data[i,:]*(t-1)/t + state[i]*state/t
+                
+            else:
+                # Average over hidden state iterations
+                for ii in tqdm(range(100)):
+                    tt = ii + 1
+                    itstate = self.iterate_clamped_vis(clamped_state = state[0:self.N_vis], T = 1)
                     
+                    for i in range(self.N_vis+self.N_hid):
+                        expect_sisj_data[i,:] = expect_sisj_data[i,:]*(tt-1)/tt + itstate[i]*itstate/tt
+        
+        expect_si_data = np.diag(expect_sisj_data)
         np.fill_diagonal(expect_sisj_data, 0)
-        expect_sisj_data = expect_sisj_data/len(data)
-        expect_si_data = expect_si_data/len(data)
         
         elapsed_time = time.time() - start_time
         print("Elapsed time for data iteration is %.1f seconds. \n"%elapsed_time)
         return expect_sisj_data, expect_si_data
         
-    def expect_sisj_model(self, iterations = 100_000):
+    def expect_sisj_model(self, iterations = 10_000):
         """"Should have a lot of iterations as otherwise underestimates the probability
         of low-probability outcomes to be zero"""
         """Checked for consistency. Works, but only for N_hid == 0 (June 4th 2020)."""
         ## Compute <s_i s_j> and <si> in the model
         import time 
+        from tqdm import tqdm
         start_time = time.time()
         
-        expect_sisj_model = np.zeros((self.N_vis,self.N_vis))
-        expect_si_model = np.zeros(self.N_vis)
+        expect_sisj_model = np.zeros((self.N_vis+self.N_hid, self.N_vis+self.N_hid))
+        expect_si_model = np.zeros(self.N_vis+self.N_hid)
+        print("Letting model run for %d iterations."%iterations)
+        #states = self.iterate(epochs = 10_000)
         
-        for it in range(iterations):
-            t= it+1
+        for it in tqdm(range(iterations)):
             newstate = self.iterate()
-        
-            """Compute <s_i>"""
-            for i in range(self.N_vis):
-                expect_si_model[i] = expect_si_model[i]*(t-1)/t + newstate[i]/t # Iterative computation of mean value
-                
-                """Compute <s_is_j>"""
-                for j in range(i+1, self.N_vis):
-                    expect_sisj_model[i,j] = expect_sisj_model[i,j]*(t-1)/t + newstate[i]*newstate[j]/t
-                    expect_sisj_model[j,i] = expect_sisj_model[i,j].copy()
+            
+            #newstate = states[it]
+            t = it+1
 
+            """Compute <s_i> (diagonal) and <s_is_j> (off-diagonal)"""
+            for i in range(self.N_vis+self.N_hid):
+                expect_sisj_model[i,:] = expect_sisj_model[i,:]*(t-1)/t + newstate[i]*newstate/t
+
+        expect_si_model = np.diag(expect_sisj_model)
+        np.fill_diagonal(expect_sisj_model, 0)
+        
         elapsed_time = time.time() - start_time
         print("Elapsed time for model iteration with %d steps is %.1f seconds. \n"%(iterations,elapsed_time))
         return expect_sisj_model, expect_si_model
