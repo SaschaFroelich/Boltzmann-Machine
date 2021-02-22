@@ -121,22 +121,28 @@ class BoltzmannM:
         # stable state distribution
         # 1 epoch corresponds to 1 iteration step where all units get updated once        
         state = self.state
+        #print(state)
 
         states = []
         for e in range(epochs):
+            # Find which state to update
+            update_s = np.random.randint(self.N_vis+self.N_hid)
+            
             z = self.bias + self.W@state
             prob_active = self.logistic(z,T)
             
-            for i in range(self.N_vis + self.N_hid):
-                if np.random.rand(1) > prob_active[i]:
-                    state[i] = 0
-                else:
-                    state[i] = 1
+            if np.random.rand(1) > prob_active[update_s]:
+                state[update_s] = 0
+            else:
+                state[update_s] = 1
                     
+                
             states.append(state)
-    
-    
+
+
         self.state = state
+        
+        #print(state)
         
         if epochs == 1:
             states = self.state
@@ -149,15 +155,16 @@ class BoltzmannM:
         state = self.state
         state[0 : self.N_vis] = clamped_state
         
+        update_s = np.random.randint(self.N_hid)
+        
         z = self.bias + self.W@state
         prob_active = self.logistic(z,T)
-        
-        for i in range(self.N_hid):
-            hidden_index = i+self.N_vis
-            if np.random.rand(1) > prob_active[hidden_index]:
-                state[hidden_index] = 0
-            else:
-                state[hidden_index] = 1
+
+        hidden_index = update_s+self.N_vis
+        if np.random.rand(1) > prob_active[hidden_index]:
+            state[hidden_index] = 0
+        else:
+            state[hidden_index] = 1
         
         self.state = state
         
@@ -184,8 +191,8 @@ class BoltzmannM:
         """Below code computes <s_i,s_j> and <s_i> of the model, then calculates
         the differences to <s_i,_j> and <_i> in the data and updates W and bias accordingly."""
         for i in range(it):
-            if i%10 == 0:
-                print("Learning %f\% done..."%(i*100/it))
+            #if i%10 == 0:
+            #   print("Learning %f\% done..."%(i*100/it))
                 
             expect_sisj_model, expect_si_model = self.expect_sisj_model()
             
@@ -201,7 +208,7 @@ class BoltzmannM:
             #diff_si.append((expect_si_data - expect_si_model).sum())
             
         #return diff_sisj, diff_si
-        print("Learning Finished.")        
+        print("Learning Finished.")
         
     def expect_sisj_data(self, data):
         """data has to be a list of dimensions no_data_patterns*no_units (visible units)"""
@@ -270,3 +277,60 @@ class BoltzmannM:
         elapsed_time = time.time() - start_time
         print("Elapsed time for model iteration with %d steps is %.1f seconds. \n"%(iterations,elapsed_time))
         return expect_sisj_model, expect_si_model
+    
+class batchBoltzmannM(BoltzmannM):
+    
+    def iterate(self, epochs = 1, T = 1):
+        """output
+        states: last network state after iteration (in case of 1 epoch).
+                history of states during iteration (in case of epochs > 1)
+        """
+        #from tqdm import tqdm
+        # Runs the generative model to create states
+        # If BM did not run before, it will need some time to settle into a
+        # stable state distribution
+        # 1 epoch corresponds to 1 iteration step where all units get updated once        
+        state = self.state
+
+        states = []
+        for e in range(epochs):
+            z = self.bias + self.W@state
+            prob_active = self.logistic(z,T)
+            
+            for i in range(self.N_vis + self.N_hid):
+                if np.random.rand(1) > prob_active[i]:
+                    state[i] = 0
+                else:
+                    state[i] = 1
+                    
+            states.append(state)
+    
+    
+        self.state = state
+        
+        if epochs == 1:
+            states = self.state
+
+        return states
+    
+    # Use decorator here??
+    def iterate_clamped_vis(self, clamped_state, T = 1):
+        
+        state = self.state
+        state[0 : self.N_vis] = clamped_state
+        
+        z = self.bias + self.W@state
+        prob_active = self.logistic(z,T)
+        
+        for i in range(self.N_hid):
+            hidden_index = i+self.N_vis
+            if np.random.rand(1) > prob_active[hidden_index]:
+                state[hidden_index] = 0
+            else:
+                state[hidden_index] = 1
+        
+        self.state = state
+        
+        return state
+    
+    
