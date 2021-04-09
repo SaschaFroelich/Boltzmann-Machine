@@ -104,6 +104,7 @@ class BoltzmannM:
             return E
 
     def logistic(self, z, T=1):
+        #return 1/(1+np.exp(-z/T - np.max(-z/T))/np.exp(-np.max(-z/T)))
         return 1/(1+np.exp(-z/T))
 
     def inpt(self,state):
@@ -172,18 +173,62 @@ class BoltzmannM:
         
         
     def learn(self, data, it = 1000, alphaW = 0.03, alphab = 0.03):
+        "Implement: Different step-sizes for each weight"
         # it = no. of iterations (iterates it times over all data)
         # Data have to be a 2D list, where a (first entry of list) row is one state vector of the visible units
         # alpha: learning rate
+        from joblib import Parallel, delayed
+        import multiprocessing
         
-        
-        print("Getting ready to do some learnin'")
+        print("\nGetting ready to do some learnin'\n")
         
         if not isinstance(data, list):
             data = data.tolist()
-            
+        
+        num_cores = multiprocessing.cpu_count()
         print("Computing expectation values in data...")
-        expect_sisj_data, expect_si_data = self.expect_sisj_data(data)
+        #expect_sisj_data, expect_si_data = self.expect_sisj_data(data)
+        
+        "==Parallelize NEEDS TO BE CHECKED=="
+        length_data = len(data)
+        data_parallel = [[]]*num_cores
+        
+        stepsize = int(np.floor(length_data / num_cores))
+        for ip in range(num_cores):
+            if ip < num_cores - 1: 
+                data_parallel[ip] = data[ip*stepsize:(ip+1)*stepsize]
+            else: 
+                data_parallel[ip] = data[ip*stepsize:]
+                restlength = len(data[ip*stepsize:])
+        
+        self.data_parallel = data_parallel
+        
+        print("\nnum_cores:%d"%num_cores)
+        results = Parallel(n_jobs=num_cores)(delayed(self.expect_sisj_data_func)(data_parallel[i]) for i in range(num_cores))
+        
+        # print("\nresults:")
+        # print(results)
+        self.results = results
+        
+        expect_sisj_data, expect_si_data = 0,0
+        for r in range(len(results)):
+            if r < len(results) - 1 :
+                expect_sisj_data += results[r][0]*stepsize
+                expect_si_data += results[r][1]*stepsize
+            elif r == len(results) - 1 :
+                expect_sisj_data += results[r][0]*restlength
+                expect_si_data += results[r][1]*restlength
+        
+        expect_sisj_data = expect_sisj_data/ length_data
+        expect_si_data = expect_si_data/ length_data
+        
+        # print("\nexpect_sisj_data:\n")
+        # print(expect_sisj_data)
+        # print("\nexpect_si_data:\n")
+        # print(expect_si_data)
+        
+        self.expect_sisj_data = expect_sisj_data
+        self.expect_si_data = expect_si_data
         
         #diff_sisj = []
         #diff_si = []
@@ -191,10 +236,9 @@ class BoltzmannM:
         """Below code computes <s_i,s_j> and <s_i> of the model, then calculates
         the differences to <s_i,_j> and <_i> in the data and updates W and bias accordingly."""
         for i in range(it):
-            #if i%10 == 0:
-            #   print("Learning %f\% done..."%(i*100/it))
+            print("\nStarting learning iteration %d of %d."%(i,it))
                 
-            expect_sisj_model, expect_si_model = self.expect_sisj_model()
+            expect_sisj_model, expect_si_model = self.expect_sisj_model_func()
             
             
             self.W = self.W + alphaW*(expect_sisj_data - expect_sisj_model)
@@ -208,15 +252,15 @@ class BoltzmannM:
             #diff_si.append((expect_si_data - expect_si_model).sum())
             
         #return diff_sisj, diff_si
-        print("Learning Finished.")
+        print("\nLearning Finished.")
         
-    def expect_sisj_data(self, data):
+    def expect_sisj_data_func(self, data):
         """data has to be a list of dimensions no_data_patterns*no_units (visible units)"""
-
+        
         import time 
         from tqdm import tqdm
         start_time = time.time()
-
+        
         ## Compute <s_i s_j> and <s_i> in the data
         expect_sisj_data = np.zeros((self.N_vis+self.N_hid,self.N_vis+\
                                      self.N_hid))
@@ -224,30 +268,34 @@ class BoltzmannM:
         expect_si_data = np.zeros(self.N_vis+self.N_hid)
         
         for idx, state in enumerate(data):
-            print("Inspecting data sample %d of %d"%(idx, len(data)))
+            print("\nInspecting data sample %d of %d.\n"%(idx+1, len(data)))
             t = idx+1
             
             if self.N_hid == 0:
                 for i in range(self.N_vis):
                     expect_sisj_data[i,:] = expect_sisj_data[i,:]*(t-1)/t + state[i]*state/t
-                
+
             else:
+                hidits = 100
+                print("\nPerforming %d iterations over hidden neurons.\n"%hidits)
                 # Average over hidden state iterations
-                for ii in tqdm(range(100)):
+                for ii in tqdm(range(hidits)):
                     tt = ii + 1
                     itstate = self.iterate_clamped_vis(clamped_state = state[0:self.N_vis], T = 1)
                     
                     for i in range(self.N_vis+self.N_hid):
                         expect_sisj_data[i,:] = expect_sisj_data[i,:]*(tt-1)/tt + itstate[i]*itstate/tt
         
+        
+        
         expect_si_data = np.diag(expect_sisj_data)
         np.fill_diagonal(expect_sisj_data, 0)
         
         elapsed_time = time.time() - start_time
-        print("Elapsed time for data iteration is %.1f seconds. \n"%elapsed_time)
+        print("\nElapsed time for data iteration is %.1f seconds. \n"%elapsed_time)
         return expect_sisj_data, expect_si_data
         
-    def expect_sisj_model(self, iterations = 10_000):
+    def expect_sisj_model_func(self, iterations = 1000):
         """"Should have a lot of iterations as otherwise underestimates the probability
         of low-probability outcomes to be zero"""
         """Checked for consistency. Works, but only for N_hid == 0 (June 4th 2020)."""
@@ -258,7 +306,7 @@ class BoltzmannM:
         
         expect_sisj_model = np.zeros((self.N_vis+self.N_hid, self.N_vis+self.N_hid))
         expect_si_model = np.zeros(self.N_vis+self.N_hid)
-        print("Letting model run for %d iterations."%iterations)
+        print("\nLetting model run for %d iterations.\n"%iterations)
         #states = self.iterate(epochs = 10_000)
         
         for it in tqdm(range(iterations)):
@@ -332,5 +380,8 @@ class batchBoltzmannM(BoltzmannM):
         self.state = state
         
         return state
+
+class sequentialBM(batchBoltzmannM):
+    """Has non-symmetrical connections"""
     
     

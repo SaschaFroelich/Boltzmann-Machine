@@ -16,10 +16,11 @@ import operator as op
 from tqdm import tqdm
 from PIL import Image
 import random
+import pickle
 
 mndata = MNIST('python-mnist/data')
 images, labels = mndata.load_training()
- 
+
 
 #%%
 """Train with binarised MNIST dataset"""
@@ -36,14 +37,14 @@ images, labels = mndata.load_training()
     
 """Binarise images"""
 images_bin = images.copy()
-#images_bin[images_bin <= 30] = 0
-#images_bin[images_bin > 30] = 1
 
 for row in tqdm(range(len(images_bin))):
     digit = [0 if i<=30 else 1 for i in images_bin[row]]
     images_bin[row] = digit
 
 del images
+
+data = images_bin.copy()
 
 #data = np.reshape(images_bin, (images_bin.shape[0],images_bin.shape[1]*images_bin.shape[2]))
 
@@ -53,34 +54,25 @@ del images
 #    print("Removing %d"%i)
 #    data = np.delete(data, i, axis = 0)
     
-    
 #del rem
 #del images_bin
 
-
-#%% Train BM on digit 8
-random.seed(111)
-
-disrupted_eight = Image.open('images/disrupted_8_inpt.png').convert('L')
-disrupted_eight = np.array(disrupted_eight).reshape((28*28,1))
-disr_8_inpt = [0 if i<=30 else 1 for i in disrupted_eight]
-
-data = []
-for i in range(len(images_bin)):
-    if labels[i] == 8:
-        data.append(images_bin[i])
-
+#%%
 """Initialise Boltzmann Machine"""
-bm = BM.BoltzmannM(28*28, no_hid=28*28)
-bm.state[0:28*28] = disr_8_inpt
-state = bm.iterate(T=0.001)
+bm = BM.batchBoltzmannM(28*28, no_hid=28*28)
+#bm.state[0:28*28] = disr_8_inpt
+state = bm.iterate(T=1)
 imvec = np.reshape(state[0:28*28], (28,28)).tolist()
 i=Image.fromarray(np.array(imvec, dtype=np.uint8)*200,"L")
 name = "images/before_disr8.png"
-i = i.resize((200,200))
+i = i.resize((200,200), resample=0)
 i.save(name)
 
-bm.learn(data, it = 10_000)
+for i in tqdm(range(100)):
+    bm.iterate()
+
+bm.T = 1
+bm.learn(data, it = 100)
 
 #%%
 "Create images before learning Before learning"
@@ -175,3 +167,47 @@ print("There is a total of %d different possible states for %d neurons"\
 
 #%%
 bmtest.expect_sisj_model(iterations = 10)
+
+
+#%% Make animation
+
+
+from tqdm import tqdm
+
+videodims = (280,280)
+fourcc = cv2.VideoWriter_fourcc(*'avc1')    
+video = cv2.VideoWriter("test.mp4",fourcc, 30,videodims)
+img = Image.new('RGB', videodims, color = 'darkred')
+
+
+#for t in tqdm(range(0,30*2)):
+for t in tqdm(range(30*10)):  
+    #imtemp = Image.new( 'RGB', (280,280), "black") 
+    state = bm.iterate(T=1)
+    imvec = np.reshape(state[0:28*28], (28,28))
+    imtemp = Image.fromarray(np.array(imvec, dtype=np.uint8)*255,"L")
+    imtemp = imtemp.resize((280,280), resample=0)
+    #pixelMap = imtemp.load()
+    #for i in range(MyImg.size[0]):    
+    #    for j in range(MyImg.size[1]):  
+            #pixelMap[i,j] = (np.random.randint(100), np.random.randint(100), np.random.randint(100))
+
+
+    # draw frame specific stuff here.
+    video.write(cv2.cvtColor(np.array(imtemp), cv2.COLOR_RGB2BGR))
+video.release()
+
+
+#%% Use pickle to save/ load objects
+
+import pickle
+
+"Save"
+fileObj = open('test.obj', 'wb')
+pickle.dump(bm,fileObj)
+fileObj.close()
+
+"Load"
+fileObj = open('test.obj', 'rb')
+haha = pickle.load(fileObj)
+fileObj.close()
